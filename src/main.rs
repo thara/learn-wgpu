@@ -68,6 +68,9 @@ struct State {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_vertices: u32,
+    use_second: bool,
+    index_buffer2: wgpu::Buffer,
+    num_vertices2: u32,
 }
 
 impl State {
@@ -158,6 +161,14 @@ impl State {
         });
 
         let num_vertices = INDICES.len() as u32;
+        let use_second = false;
+
+        let index_buffer2 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer2"),
+            contents: bytemuck::cast_slice(INDICES2),
+            usage: wgpu::BufferUsage::INDEX,
+        });
+        let num_vertices2 = INDICES2.len() as u32;
 
         Self {
             surface,
@@ -170,6 +181,9 @@ impl State {
             vertex_buffer,
             index_buffer,
             num_vertices,
+            use_second,
+            index_buffer2,
+            num_vertices2,
         }
     }
 
@@ -180,8 +194,22 @@ impl State {
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
     }
 
-    fn input(&mut self, _event: &WindowEvent) -> bool {
-        false
+    fn input(&mut self, event: &WindowEvent) -> bool {
+        match event {
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state,
+                        virtual_keycode: Some(VirtualKeyCode::Space),
+                        ..
+                    },
+                ..
+            } => {
+                self.use_second = *state == ElementState::Pressed;
+                true
+            }
+            _ => false,
+        }
     }
 
     fn update(&mut self) {}
@@ -212,8 +240,14 @@ impl State {
             });
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..));
-            render_pass.draw_indexed(0..self.num_vertices, 0, 0..1);
+
+            if self.use_second {
+                render_pass.set_index_buffer(self.index_buffer2.slice(..));
+                render_pass.draw_indexed(0..self.num_vertices2, 0, 0..1);
+            } else {
+                render_pass.set_index_buffer(self.index_buffer.slice(..));
+                render_pass.draw_indexed(0..self.num_vertices, 0, 0..1);
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -274,3 +308,4 @@ const VERTICES: &[Vertex] = &[
 ];
 
 const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
+const INDICES2: &[u16] = &[0, 1, 4, 2, 3, 4];
