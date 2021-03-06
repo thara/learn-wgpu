@@ -71,10 +71,14 @@ struct State {
     index_buffer: wgpu::Buffer,
     num_vertices: u32,
     use_second: bool,
-    index_buffer2: wgpu::Buffer,
-    num_vertices2: u32,
+
     diffuse_bind_group: wgpu::BindGroup,
+    #[allow(dead_code)]
     diffuse_texture: texture::Texture,
+
+    diffuse_bind_group2: wgpu::BindGroup,
+    #[allow(dead_code)]
+    diffuse_texture2: texture::Texture,
 }
 
 impl State {
@@ -112,6 +116,10 @@ impl State {
         let diffuse_bytes = include_bytes!("happy-tree.png");
         let diffuse_texture =
             texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png").unwrap();
+        let diffuse_bytes2 = include_bytes!("happy-tree-cartoon.png");
+        let diffuse_texture2 =
+            texture::Texture::from_bytes(&device, &queue, diffuse_bytes2, "happy-tree-cartoon.png")
+                .unwrap();
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -149,6 +157,20 @@ impl State {
             ],
             label: Some("diffuse_bind_group"),
         });
+        let diffuse_bind_group2 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture2.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_texture2.sampler),
+                },
+            ],
+            label: Some("diffuse_bind_group2"),
+        });
 
         let vs_module = device.create_shader_module(wgpu::include_spirv!("shader.vert.spv"));
         let fs_module = device.create_shader_module(wgpu::include_spirv!("shader.frag.spv"));
@@ -174,13 +196,6 @@ impl State {
         let num_vertices = INDICES.len() as u32;
         let use_second = false;
 
-        let index_buffer2 = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer2"),
-            contents: bytemuck::cast_slice(INDICES2),
-            usage: wgpu::BufferUsage::INDEX,
-        });
-        let num_vertices2 = INDICES2.len() as u32;
-
         Self {
             surface,
             device,
@@ -193,10 +208,10 @@ impl State {
             index_buffer,
             num_vertices,
             use_second,
-            index_buffer2,
-            num_vertices2,
             diffuse_bind_group,
+            diffuse_bind_group2,
             diffuse_texture,
+            diffuse_texture2,
         }
     }
 
@@ -251,17 +266,18 @@ impl State {
                 }],
                 depth_stencil_attachment: None,
             });
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
-            if self.use_second {
-                render_pass.set_index_buffer(self.index_buffer2.slice(..));
-                render_pass.draw_indexed(0..self.num_vertices2, 0, 0..1);
+            let bind_group = if self.use_second {
+                &self.diffuse_bind_group2
             } else {
-                render_pass.set_index_buffer(self.index_buffer.slice(..));
-                render_pass.draw_indexed(0..self.num_vertices, 0, 0..1);
-            }
+                &self.diffuse_bind_group
+            };
+
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..));
+            render_pass.draw_indexed(0..self.num_vertices, 0, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -322,7 +338,6 @@ const VERTICES: &[Vertex] = &[
 ];
 
 const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
-const INDICES2: &[u16] = &[0, 1, 4, 2, 3, 4];
 
 fn create_pipeline(
     device: &wgpu::Device,
