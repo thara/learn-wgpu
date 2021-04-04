@@ -197,6 +197,27 @@ impl Uniforms {
     }
 }
 
+struct UniformStaging {
+    camera: Camera,
+    model_rotation: cgmath::Deg<f32>,
+}
+
+impl UniformStaging {
+    fn new(camera: Camera) -> Self {
+        Self {
+            camera,
+            model_rotation: cgmath::Deg(0.0),
+        }
+    }
+
+    fn update_uniforms(&self, uniforms: &mut Uniforms) {
+        uniforms.view_proj = (OPENGL_TO_WGPU_MATRIX
+            * self.camera.build_view_projection_matrix()
+            * cgmath::Matrix4::from_angle_z(self.model_rotation))
+        .into();
+    }
+}
+
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
@@ -217,9 +238,9 @@ struct State {
     index_buffer: wgpu::Buffer,
     num_vertices: u32,
 
-    camera: Camera,
     camera_controller: CameraController,
     uniforms: Uniforms,
+    uniform_staging: UniformStaging,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
 
@@ -323,7 +344,8 @@ impl State {
         let camera_controller = CameraController::new(0.2);
 
         let mut uniforms = Uniforms::new();
-        uniforms.update_view_proj(&camera);
+        let uniform_staging = UniformStaging::new(camera);
+        uniform_staging.update_uniforms(&mut uniforms);
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
@@ -388,9 +410,9 @@ impl State {
             vertex_buffer,
             index_buffer,
             num_vertices,
-            camera,
             camera_controller,
             uniforms,
+            uniform_staging,
             uniform_buffer,
             uniform_bind_group,
             diffuse_bind_group,
@@ -404,6 +426,8 @@ impl State {
         self.sc_desc.width = new_size.width;
         self.sc_desc.height = new_size.height;
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
+
+        self.uniform_staging.camera.aspect = self.sc_desc.width as f32 / self.sc_desc.height as f32;
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
@@ -411,8 +435,10 @@ impl State {
     }
 
     fn update(&mut self) {
-        self.camera_controller.update_camera(&mut self.camera);
-        self.uniforms.update_view_proj(&self.camera);
+        self.camera_controller
+            .update_camera(&mut self.uniform_staging.camera);
+        self.uniform_staging.model_rotation += cgmath::Deg(2.0);
+        self.uniform_staging.update_uniforms(&mut self.uniforms);
         self.queue.write_buffer(
             &self.uniform_buffer,
             0,
