@@ -1,9 +1,11 @@
 use futures::executor::block_on;
 
+mod model;
 mod texture;
 
-use cgmath;
-use texture::Texture;
+use crate::model::Vertex as _;
+
+use cgmath::{self, Zero};
 use wgpu::util::DeviceExt;
 use winit::{
     event::*,
@@ -318,6 +320,8 @@ struct State {
     diffuse_texture2: texture::Texture,
 
     depth_pass: DepthPass,
+
+    obj_model: model::Model,
 }
 
 impl State {
@@ -455,7 +459,7 @@ impl State {
             &sc_desc,
             vs_module,
             fs_module,
-            texture_bind_group_layout,
+            &texture_bind_group_layout,
             uniform_bind_group_layout,
         );
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -471,16 +475,17 @@ impl State {
 
         let num_vertices = INDICES.len() as u32;
 
+        const SPACE_BETWEEN: f32 = 3.0;
         let instances = (0..NUM_INSTANCES_PER_ROW)
             .flat_map(|z| {
-                use cgmath::{InnerSpace, Rotation3, Zero};
-
                 (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                    let position = cgmath::Vector3 {
-                        x: x as f32,
-                        y: 0.0,
-                        z: z as f32,
-                    } - INSTANCE_DISPLACEMENT;
+                    use cgmath::{InnerSpace, Rotation3};
+
+                    let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                    let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+
+                    let position = cgmath::Vector3 { x, y: 0.0, z };
+
                     let rotation = if position.is_zero() {
                         cgmath::Quaternion::from_axis_angle(
                             cgmath::Vector3::unit_z(),
@@ -496,6 +501,32 @@ impl State {
                 })
             })
             .collect::<Vec<_>>();
+
+        // let instances = (0..NUM_INSTANCES_PER_ROW)
+        //     .flat_map(|z| {
+        //         use cgmath::{InnerSpace, Rotation3, Zero};
+
+        //         (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+        //             let position = cgmath::Vector3 {
+        //                 x: x as f32,
+        //                 y: 0.0,
+        //                 z: z as f32,
+        //             } - INSTANCE_DISPLACEMENT;
+        //             let rotation = if position.is_zero() {
+        //                 cgmath::Quaternion::from_axis_angle(
+        //                     cgmath::Vector3::unit_z(),
+        //                     cgmath::Deg(0.0),
+        //                 )
+        //             } else {
+        //                 cgmath::Quaternion::from_axis_angle(
+        //                     position.clone().normalize(),
+        //                     cgmath::Deg(45.0),
+        //                 )
+        //             };
+        //             Instance { position, rotation }
+        //         })
+        //     })
+        //     .collect::<Vec<_>>();
         let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
@@ -504,6 +535,15 @@ impl State {
         });
 
         let depth_pass = DepthPass::new(&device, &sc_desc);
+
+        let res_dir = std::path::Path::new(env!("OUT_DIR")).join("res");
+        let obj_model = model::Model::load(
+            &device,
+            &queue,
+            &texture_bind_group_layout,
+            res_dir.join("cube.obj"),
+        )
+        .unwrap();
 
         Self {
             surface,
@@ -527,6 +567,7 @@ impl State {
             diffuse_texture,
             diffuse_texture2,
             depth_pass,
+            obj_model,
         }
     }
 
@@ -588,13 +629,22 @@ impl State {
                 }),
             });
 
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             render_pass.set_bind_group(1, &self.uniform_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.num_vertices, 0, 0..self.instances.len() as _);
+
+            use model::DrawModel;
+            render_pass
+                .draw_mesh_instaned(&self.obj_model.meshes[0], 0..self.instances.len() as u32);
+
+            // render_pass.set_pipeline(&self.render_pipeline);
+            // render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+            // render_pass.set_bind_group(1, &self.uniform_bind_group, &[]);
+            // render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            // render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            // render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            // render_pass.draw_indexed(0..self.num_vertices, 0, 0..self.instances.len() as _);
         }
 
         self.depth_pass.render(&frame, &mut encoder);
@@ -684,12 +734,12 @@ fn create_pipeline(
     sc_desc: &wgpu::SwapChainDescriptor,
     vs_module: wgpu::ShaderModule,
     fs_module: wgpu::ShaderModule,
-    texture_bind_group_layout: wgpu::BindGroupLayout,
+    texture_bind_group_layout: &wgpu::BindGroupLayout,
     uniform_bind_group_layout: wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Pipeline Layout"),
-        bind_group_layouts: &[&texture_bind_group_layout, &uniform_bind_group_layout],
+        bind_group_layouts: &[texture_bind_group_layout, &uniform_bind_group_layout],
         push_constant_ranges: &[],
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -698,7 +748,7 @@ fn create_pipeline(
         vertex: wgpu::VertexState {
             module: &vs_module,
             entry_point: "main",
-            buffers: &[Vertex::desc(), InstanceRaw::desc()],
+            buffers: &[model::ModelVertex::desc(), InstanceRaw::desc()],
         },
         fragment: Some(wgpu::FragmentState {
             module: &fs_module,
